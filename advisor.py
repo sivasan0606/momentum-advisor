@@ -33,7 +33,6 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-import threading
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -65,9 +64,7 @@ class AdvisorConfig:
     min_price_days: int = 273
     cache_dir: str = "cache"
     out_path: str = "advisor.html"
-    host: str = "127.0.0.1"
     port: int = 8765
-    scan_token: Optional[str] = None
     email_config: str = "mail_config.json"
 
 
@@ -751,11 +748,7 @@ def parse_args():
     p.add_argument("--out", default="advisor.html")
     p.add_argument("--serve", action="store_true",
                    help="Host the page locally and let the 'Run scan' button refresh prices.")
-    p.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"),
-                   help="Interface to bind on (use 0.0.0.0 to expose publicly).")
-    p.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8765")))
-    p.add_argument("--scan-token", default=os.environ.get("SCAN_TOKEN", ""),
-                   help="Secret required by the POST /scan endpoint (X-Scan-Token header).")
+    p.add_argument("--port", type=int, default=8765)
     p.add_argument("--email", action="store_true",
                    help="After scanning, email the report (uses --email-config).")
     p.add_argument("--test-email", action="store_true",
@@ -826,20 +819,10 @@ class _ScanHandler(SimpleHTTPRequestHandler):
     """Serves the project directory + a POST /scan endpoint that re-runs the scan."""
 
     server_cfg = None
-    token = ""
 
     def do_POST(self):
         if self.path != "/scan":
             self.send_error(404)
-            return
-        if self.token and self.headers.get("X-Scan-Token", "") != self.token:
-            body = json.dumps({"status": "error",
-                               "message": "Unauthorized: valid X-Scan-Token header required."}).encode()
-            self.send_response(401)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
             return
         try:
             out = run_scan(self.server_cfg)
@@ -864,7 +847,7 @@ def make_cfg(args) -> AdvisorConfig:
         cash=args.cash, max_stocks=args.max_stocks, stoploss=args.stoploss,
         model=args.model, j_months=args.j, k_months=args.k,
         end_date=args.end, out_path=args.out, holdings_path=args.holdings,
-        host=args.host, port=args.port, scan_token=args.scan_token,
+        port=args.port,
         start_date=args.start or (pd.Timestamp(args.end) - pd.Timedelta(days=550)).strftime("%Y-%m-%d"),
         email_config=args.email_config,
     )
@@ -1065,36 +1048,13 @@ def main():
         return
 
     if args.serve:
+        run_scan(cfg)  # initial scan so the page is fresh
         serve_dir = os.path.dirname(os.path.abspath(cfg.out_path)) or "."
         _ScanHandler.server_cfg = cfg
-        _ScanHandler.token = cfg.scan_token or ""
         handler = partial(_ScanHandler, directory=serve_dir)
-        httpd = ThreadingHTTPServer((cfg.host, cfg.port), handler)
-        print(f"\nServing advisor at  http://{'localhost' if cfg.host == '127.0.0.1' else cfg.host}:{cfg.port}/advisor.html")
-        if cfg.scan_token:
-            print("POST /scan is protected by an X-Scan-Token header.")
+        httpd = ThreadingHTTPServer(("127.0.0.1", cfg.port), handler)
+        print(f"\nServing advisor at  http://localhost:{cfg.port}/advisor.html")
         print(f"Press Ctrl+C to stop. Use the 'Run scan' button on the page to refresh.")
-
-        def _initial_scan() -> None:
-            # Best-effort fresh scan in the background so startup never blocks
-            # (important on hosts like Render where the port must open quickly,
-            # and the price download may be slow or reachable only intermittently).
-            try:
-                run_scan(cfg)
-                print("Initial scan finished; page is fresh.")
-            except Exception as e:  # noqa: BLE001 - keep serving even if the scan fails
-                print(f"Initial scan failed (serving existing page): {e}", file=sys.stderr)
-
-        if not os.path.exists(cfg.out_path):
-            # Serve a minimal placeholder until the first background scan lands.
-            with open(cfg.out_path, "w") as f:
-                f.write("<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                        "<title>Momentum Advisor</title></head><body>"
-                        "<h1>Momentum Advisor</h1>"
-                        "<p>Standing up... The first scan is downloading prices. "
-                        "Refresh in a minute.</p></body></html>")
-
-        threading.Thread(target=_initial_scan, daemon=True).start()
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
