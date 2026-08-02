@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: momentum-advisor
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 advisor.py --serve --host 0.0.0.0 --port $PORT --scan-token $SCAN_TOKEN
+    plan: free
+    envVars:
+      - key: SCAN_TOKEN
+        sync: false
