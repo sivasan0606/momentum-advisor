@@ -1,0 +1,17 @@
+# credentials - never commit
+mail_config.json
+
+# generated reports
+advisor.html
+output/
+output_smoke/
+
+# caches / logs / runtime
+cache/
+logs/
+__pycache__/
+*.pyc
+holdings.csv
+server.pid
+tests/_tmp_*.csv
+tests/_tmp_*.html
