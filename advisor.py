@@ -33,6 +33,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import threading
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -1064,7 +1065,6 @@ def main():
         return
 
     if args.serve:
-        run_scan(cfg)  # initial scan so the page is fresh
         serve_dir = os.path.dirname(os.path.abspath(cfg.out_path)) or "."
         _ScanHandler.server_cfg = cfg
         _ScanHandler.token = cfg.scan_token or ""
@@ -1074,6 +1074,27 @@ def main():
         if cfg.scan_token:
             print("POST /scan is protected by an X-Scan-Token header.")
         print(f"Press Ctrl+C to stop. Use the 'Run scan' button on the page to refresh.")
+
+        def _initial_scan() -> None:
+            # Best-effort fresh scan in the background so startup never blocks
+            # (important on hosts like Render where the port must open quickly,
+            # and the price download may be slow or reachable only intermittently).
+            try:
+                run_scan(cfg)
+                print("Initial scan finished; page is fresh.")
+            except Exception as e:  # noqa: BLE001 - keep serving even if the scan fails
+                print(f"Initial scan failed (serving existing page): {e}", file=sys.stderr)
+
+        if not os.path.exists(cfg.out_path):
+            # Serve a minimal placeholder until the first background scan lands.
+            with open(cfg.out_path, "w") as f:
+                f.write("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                        "<title>Momentum Advisor</title></head><body>"
+                        "<h1>Momentum Advisor</h1>"
+                        "<p>Standing up... The first scan is downloading prices. "
+                        "Refresh in a minute.</p></body></html>")
+
+        threading.Thread(target=_initial_scan, daemon=True).start()
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
