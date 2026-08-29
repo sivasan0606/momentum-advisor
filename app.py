@@ -305,15 +305,21 @@ def tab_portfolio():
         with st.spinner("Loading prices..."):
             daily = load_prices(port_start, port_end, None)
             current_prices = {}
+            ret_1y = {}
             for t in daily.columns:
                 v = daily[t].iloc[-1]
                 if pd.notna(v):
                     current_prices[t] = float(v)
+            if len(daily) > 252:
+                r1y = daily.iloc[-1] / daily.shift(252).iloc[-1] - 1.0
+                ret_1y = {t: float(v) for t, v in r1y.items()
+                          if pd.notna(v) and np.isfinite(v)}
 
         hs = st.session_state.holdings.copy()
         hs["norm_ticker"] = hs["ticker"].str.upper().str.strip().apply(
             lambda x: x if x.endswith(".NS") else x + ".NS" if x else "")
         hs["current_price"] = hs["norm_ticker"].map(current_prices)
+        hs["ret_1y"] = hs["norm_ticker"].map(ret_1y)
         hs["inv_value"] = hs["quantity"] * hs["avg_price"]
         hs["cur_value"] = hs["quantity"] * hs["current_price"]
         hs["pnl_rs"] = hs["cur_value"] - hs["inv_value"]
@@ -324,7 +330,10 @@ def tab_portfolio():
             "Ticker": hs["ticker"],
             "Qty": hs["quantity"],
             "Buy Price": hs["avg_price"].apply(lambda x: fmt_money(x) if x else "n/a"),
+            "Inv Value": hs.apply(lambda r: fmt_money(r["inv_value"]) if r["quantity"] and r["avg_price"] else "n/a", axis=1),
+            "Buy Date": hs["entry_date"].apply(lambda x: x if x else "n/a"),
             "Current": hs["current_price"].apply(lambda x: fmt_money(x) if pd.notna(x) else "n/a"),
+            "1Y Return": hs["ret_1y"].apply(lambda x: fmt_pct(x) if pd.notna(x) else "n/a"),
             "P&L %": hs["pnl_pct"].apply(lambda x: fmt_pct(x) if pd.notna(x) else "n/a"),
             "P&L (Rs)": hs.apply(lambda r: fmt_money(r["pnl_rs"]) if pd.notna(r["current_price"]) else "n/a", axis=1),
             "Stoploss": hs["stoploss_price"].apply(lambda x: fmt_money(x) if x else "n/a"),
@@ -337,11 +346,12 @@ def tab_portfolio():
             tot_val = valid["cur_value"].sum()
             tot_pnl = tot_val - tot_inv
 
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             c1.metric("Total invested", fmt_money(tot_inv))
             c2.metric("Current value", fmt_money(tot_val))
-            c3.metric("Total P&L", fmt_money(tot_pnl),
-                       f"{tot_pnl / tot_inv:.1%}" if tot_inv else "")
+            c3.metric("Open P&L", fmt_money(tot_val - tot_inv),
+                       f"{(tot_val / tot_inv - 1):.1%}" if tot_inv else "")
+            c4.metric("Holdings", f"{len(valid)} held")
 
             sells = hs[(hs["pnl_pct"].notna()) & (hs["pnl_pct"] < -port_stoploss)]
             if len(sells) > 0:
