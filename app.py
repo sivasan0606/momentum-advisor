@@ -231,6 +231,62 @@ def tab_portfolio():
         })
 
     st.subheader("What you own")
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        csv_file = st.file_uploader("Load CSV/Excel (Zerodha tradebook)", type=["csv", "xlsx", "xls"])
+
+    if csv_file is not None:
+        try:
+            name = csv_file.name.lower()
+            if name.endswith((".xlsx", ".xls")):
+                df = pd.read_excel(csv_file)
+            else:
+                df = pd.read_csv(csv_file)
+            df.columns = [c.strip().lower() for c in df.columns]
+            sym_col = next((c for c in ["symbol", "ticker", "stock", "company"] if c in df.columns), None)
+            qty_col = next((c for c in ["qty", "quantity"] if c in df.columns), None)
+            price_col = next((c for c in ["price", "avg.", "avg price", "average price"] if c in df.columns), None)
+            date_col = next((c for c in ["trade_date", "date", "trade date"] if c in df.columns), None)
+            type_col = next((c for c in ["trade_type", "type", "side"] if c in df.columns), None)
+
+            if sym_col and qty_col and price_col:
+                buys = {}
+                for _, row in df.iterrows():
+                    ticker = str(row[sym_col]).strip().upper().replace("-BE", "").replace("-EQ", "").replace("-BZ", "")
+                    if not ticker.endswith(".NS"):
+                        ticker += ".NS"
+                    qty = abs(float(row[qty_col]))
+                    price = float(row[price_col])
+                    trade_type = str(row.get(type_col, "")).upper() if type_col else ""
+                    is_sell = trade_type in ("SELL", "S") or float(row[qty_col]) < 0
+                    if is_sell:
+                        continue
+                    if ticker not in buys:
+                        buys[ticker] = {"qty": 0, "total_cost": 0, "date": ""}
+                    buys[ticker]["qty"] += qty
+                    buys[ticker]["total_cost"] += qty * price
+                    dt = str(row.get(date_col, "")).strip() if date_col else ""
+                    if dt and not buys[ticker]["date"]:
+                        buys[ticker]["date"] = dt
+
+                rows = []
+                for ticker, b in buys.items():
+                    rows.append({
+                        "ticker": ticker.replace(".NS", ""),
+                        "quantity": int(b["qty"]),
+                        "avg_price": round(b["total_cost"] / b["qty"], 2) if b["qty"] else 0.0,
+                        "entry_date": b["date"],
+                    })
+                if rows:
+                    st.session_state.holdings = pd.DataFrame(rows)
+                    st.success(f"Loaded {len(rows)} holding(s) from {csv_file.name}")
+                else:
+                    st.warning("No buy trades found in the file.")
+            else:
+                st.error("Could not find symbol/qty/price columns. Expected Zerodha tradebook format.")
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+
     st.caption("Edit your holdings below. Current price and P&L update after a scan.")
 
     st.session_state.holdings = st.data_editor(
