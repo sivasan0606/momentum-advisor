@@ -1,11 +1,9 @@
-"""Streamlit app: Jegadeesh & Titman (1993) momentum backtester for NSE.
+"""Streamlit app: JT 1993 momentum backtester + advisor + portfolio for NSE.
 
-Run with:  streamlit run app.py
-
-Toggles Model A (J-month/K-month decile) and Model B (Weighted Relative
-Strength, WRSS), the 200-day SMA trend overlay, long-only vs long-short, and
-a max-stock concentration cap. Reports growth, CAGR, Sharpe, max drawdown,
-and market-model alpha/beta against the NIFTY 50 index.
+Tabs:
+  Backtester — historical backtest with equity curve, Sharpe, alpha/beta
+  Advisor    — current target portfolio, buy/sell recommendations
+  Portfolio  — track your actual holdings and P&L
 """
 import sys
 import os
@@ -18,13 +16,16 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from momentum_engine import (MomentumConfig, load_monthly, run_momentum,
+from momentum_engine import (MomentumConfig, formation_returns, run_momentum,
                              performance_stats)
 from quantbacktest import data as qdata
 
-st.set_page_config(page_title="JT 1993 Momentum Backtester (NSE)", layout="wide")
+st.set_page_config(page_title="Momentum Advisor (NSE)", layout="wide")
 
 
+# ---------------------------------------------------------------------------
+# Shared cached helpers
+# ---------------------------------------------------------------------------
 @st.cache_data(show_spinner=False, ttl=3600)
 def load_prices(start, end, universe_limit):
     tickers = qdata.load_universe("nifty500")
@@ -38,59 +39,26 @@ def load_prices(start, end, universe_limit):
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def load_bench(start, end):
-    b = qdata.download_benchmark("^NSEI", start, end, cache_dir="cache")
-    return b
-
-
-def compute(start, end, capital, model, j, k, max_stocks, long_short,
-            sma_filter, cost, universe_limit):
-    daily = load_prices(start, end, universe_limit)
-    monthly_close = daily.resample("ME").last()
-    monthly_sma = daily.rolling(200).mean().resample("ME").last()
-    monthly_ret = monthly_close.pct_change()
-    cfg = MomentumConfig(model=model, j_months=j, k_months=k,
-                         initial_capital=capital, max_stocks=max_stocks,
-                         long_short=long_short, sma_trend_filter=sma_filter,
-                         transaction_cost=cost, start_date=start, end_date=end)
-    result = run_momentum(monthly_close, monthly_ret, monthly_sma, cfg)
-    bench = load_bench(start, end).resample("ME").last().pct_change()
-    stats = performance_stats(result, bench)
-    result.stats = stats
-    return result, stats, bench
-
-
-def plot_equity(result, bench):
-    eq_norm = result.equity / result.config.initial_capital
-    fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(eq_norm.index, eq_norm.values, linewidth=2, color="navy",
-            label=f"Model {result.config.model} (J={result.config.j_months}, K={result.config.k_months})")
-    if bench is not None and len(bench) > 2:
-        bn = bench.cumsum().add(1)
-        bn = bn.loc[eq_norm.index[0]:].dropna()
-        bn = bn / bn.iloc[0]
-        ax.plot(bn.index, bn.values, color="crimson", alpha=0.8,
-                label="^NSEI (buy & hold)")
-    ax.axhline(1.0, color="gray", ls="--", lw=1)
-    ax.set_title("Jegadeesh & Titman (1993) Momentum - Normalized Growth")
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Growth (1.0 = initial capital)")
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    return fig
+    return qdata.download_benchmark("^NSEI", start, end, cache_dir="cache")
 
 
 def fmt_pct(x, digits=2):
     return "n/a" if x is None or pd.isna(x) else f"{x * 100:.{digits}f}%"
 
 
-def main():
-    st.title("Jegadeesh & Titman (1993) Momentum Backtester — NSE")
-    st.caption("Returns to Buying Winners and Selling Losers (JF, 1993) — Models A & B, "
-               "with a 200-day SMA trend overlay and concentration cap.")
+def fmt_money(v):
+    return f"Rs {v:,.0f}"
+
+
+# ---------------------------------------------------------------------------
+# TAB 1: Backtester
+# ---------------------------------------------------------------------------
+def tab_backtester():
+    st.header("Jegadeesh & Titman (1993) Momentum Backtester")
+    st.caption("Models A & B, 200-day SMA trend overlay, concentration cap.")
 
     with st.sidebar:
-        st.header("Parameters")
+        st.header("Backtester Parameters")
         capital = st.number_input("Initial capital (Rs)", 10000.0, 1e9, 400000.0, step=50000.0)
         model = st.radio("Strategy model", ["A (decile, 12-1)", "B (WRSS)"])
         model = model[0]
@@ -111,48 +79,233 @@ def main():
     if run_btn:
         ul = universe_limit or None
         with st.spinner("Running backtest..."):
-            result, stats, bench = compute(start, end, float(capital), model, j, k,
-                                           max_stocks, long_short, sma_filter,
-                                           float(cost), ul)
+            daily = load_prices(start, end, ul)
+            monthly_close = daily.resample("ME").last()
+            monthly_sma = daily.rolling(200).mean().resample("ME").last()
+            monthly_ret = monthly_close.pct_change()
+            cfg = MomentumConfig(model=model, j_months=j, k_months=k,
+                                 initial_capital=capital, max_stocks=max_stocks,
+                                 long_short=long_short, sma_trend_filter=sma_filter,
+                                 transaction_cost=cost, start_date=start, end_date=end)
+            result = run_momentum(monthly_close, monthly_ret, monthly_sma, cfg)
+            bench = load_bench(start, end).resample("ME").last().pct_change()
+            stats = performance_stats(result, bench)
 
-        st.header("Performance")
+        st.subheader("Performance")
         m = st.columns(6)
-        m[0].metric("Final value", f"Rs {stats['final_value']:,.0f}")
+        m[0].metric("Final value", fmt_money(stats["final_value"]))
         m[1].metric("Total return", fmt_pct(stats["total_return"]))
         m[2].metric("CAGR", fmt_pct(stats["cagr"]))
         m[3].metric("Sharpe", f"{stats['sharpe']:.2f}")
         m[4].metric("Max drawdown", fmt_pct(stats["max_drawdown"]))
         m[5].metric("Avg holdings", f"{stats['avg_long_positions']:.1f}")
 
-        st.pyplot(plot_equity(result, bench))
+        eq_norm = result.equity / result.config.initial_capital
+        fig, ax = plt.subplots(figsize=(12, 5))
+        ax.plot(eq_norm.index, eq_norm.values, linewidth=2, color="navy",
+                label=f"Model {result.config.model} (J={j}, K={k})")
+        if bench is not None and len(bench) > 2:
+            bn = bench.cumsum().add(1)
+            bn = bn.loc[eq_norm.index[0]:].dropna()
+            bn = bn / bn.iloc[0]
+            ax.plot(bn.index, bn.values, color="crimson", alpha=0.8, label="^NSEI (buy & hold)")
+        ax.axhline(1.0, color="gray", ls="--", lw=1)
+        ax.set_title("Normalized Growth")
+        ax.legend()
+        ax.grid(alpha=0.3)
+        fig.tight_layout()
+        st.pyplot(fig)
 
         if "alpha_annualized" in stats:
             st.subheader("Market-model regression (vs ^NSEI)")
             c = st.columns(4)
-            c[0].metric("Alpha (annualized)", fmt_pct(stats["alpha_annualized"]),
-                        f"t = {stats['alpha_tstat']:.2f}")
+            c[0].metric("Alpha", fmt_pct(stats["alpha_annualized"]), f"t = {stats['alpha_tstat']:.2f}")
             c[1].metric("Beta", f"{stats['beta']:.2f}", f"t = {stats['beta_tstat']:.2f}")
             c[2].metric("R-squared", f"{stats['r2']:.3f}")
             c[3].metric("Excess vs benchmark", fmt_pct(stats["excess_return"]))
 
         st.subheader("Last month holdings")
         last = result.weights.iloc[-1]
-        holdings = pd.DataFrame({
-            "ticker": last.index,
-            "weight": last.values,
-        }).sort_values("weight", ascending=False)
-        holdings = holdings[holdings["weight"] > 0.001]
-        holdings["weight_pct"] = (holdings["weight"] * 100).round(2)
-        st.dataframe(holdings[["ticker", "weight_pct"]].set_index("ticker"),
-                     use_container_width=True)
+        holdings_df = pd.DataFrame({"ticker": last.index, "weight": last.values})
+        holdings_df = holdings_df[holdings_df["weight"] > 0.001].sort_values("weight", ascending=False)
+        holdings_df["weight_pct"] = (holdings_df["weight"] * 100).round(2)
+        st.dataframe(holdings_df[["ticker", "weight_pct"]].set_index("ticker"), use_container_width=True)
 
         st.subheader("Monthly returns (last 12)")
         tail = result.monthly_returns.tail(12).to_frame("strategy_return")
         tail["strategy_pct"] = (tail["strategy_return"] * 100).round(2)
         if bench is not None and len(bench) > 2:
             tail["bench_pct"] = (bench.reindex(tail.index) * 100).round(2)
-        st.dataframe(tail[["strategy_pct", "bench_pct"]],
-                     use_container_width=True)
+        st.dataframe(tail[["strategy_pct", "bench_pct"]], use_container_width=True)
+
+
+# ---------------------------------------------------------------------------
+# TAB 2: Advisor
+# ---------------------------------------------------------------------------
+def tab_advisor():
+    st.header("Quarterly Momentum Advisor")
+    st.caption("JT-1993 target portfolio, buy/sell recommendations based on your holdings.")
+
+    with st.sidebar:
+        st.header("Advisor Parameters")
+        adv_start = st.text_input("Advisor start", "2024-01-01", key="adv_start")
+        adv_end = st.text_input("Advisor end", pd.Timestamp.now().strftime("%Y-%m-%d"), key="adv_end")
+        adv_cash = st.number_input("New cash this quarter (Rs)", 0.0, 1e9, 0.0, step=50000.0, key="adv_cash")
+        adv_max = st.slider("Max stocks", 1, 20, 10, key="adv_max")
+        adv_stoploss = st.number_input("Stoploss %", 1.0, 30.0, 7.0, step=0.5, key="adv_stop") / 100.0
+        adv_run = st.button("Run advisor scan", type="primary", key="adv_run")
+
+    if adv_run:
+        with st.spinner("Downloading prices and computing targets..."):
+            daily = load_prices(adv_start, adv_end, None)
+            sma = daily.rolling(200).mean()
+            monthly_close = daily.resample("ME").last()
+            monthly_sma = sma.resample("ME").last()
+            monthly_ret = monthly_close.pct_change()
+
+            cfg = MomentumConfig(model="A", j_months=12, k_months=3,
+                                 max_stocks=adv_max, sma_trend_filter=True,
+                                 sma_window=200, min_price_days=273,
+                                 cache_dir="cache",
+                                 start_date=adv_start, end_date=adv_end)
+            result = run_momentum(monthly_close, monthly_ret, monthly_sma, cfg)
+
+            last_w = result.weights.iloc[-1]
+            target_weights = {t: float(w) for t, w in last_w.items() if w > 0.0001}
+            formation = formation_returns(monthly_close, 12).iloc[-1].dropna()
+            formation = formation.sort_values(ascending=False)
+            ranks = {t: i + 1 for i, t in enumerate(formation.index)}
+            target_ranks = {t: ranks.get(t, 999) for t in target_weights}
+
+            prices = {t: float(v) for t, v in daily.iloc[-1].items() if pd.isna(v) is False}
+            ret_1y = {}
+            if len(daily) > 252:
+                ret_1y_series = daily.iloc[-1] / daily.shift(252).iloc[-1] - 1.0
+                ret_1y = {t: float(v) for t, v in ret_1y_series.items()
+                          if pd.notna(v) and np.isfinite(v)}
+            as_of = daily.index[-1].strftime("%Y-%m-%d")
+
+        st.success(f"Data as of **{as_of}** — {len(target_weights)} target names")
+
+        st.subheader("Target Portfolio")
+        target_df = pd.DataFrame([
+            {"Ticker": t.replace(".NS", ""),
+             "Rank": target_ranks.get(t, 999),
+             "Weight": f"{w:.1%}",
+             "Price": fmt_money(prices.get(t, 0)),
+             "1Y Return": fmt_pct(ret_1y.get(t))}
+            for t, w in sorted(target_weights.items(), key=lambda x: target_ranks.get(x[0], 999))
+        ])
+        st.dataframe(target_df.set_index("Ticker"), use_container_width=True)
+
+        st.subheader("Rules")
+        st.markdown(f"""
+- **Stoploss:** Exit if a holding falls **{adv_stoploss:.0%}** below your buy price
+- **Entry:** Buy the **top {adv_max}** stocks by 12-month momentum (skip last month), above 200-day SMA
+- **Rebalance:** Quarterly, top-up only — never trim over-weighted holdings
+- **Exit:** Sell if a stock drops out of top-{adv_max} or below SMA-200
+- **Next scan:** 4th of Feb/May/Aug/Nov, after market close
+""")
+
+
+# ---------------------------------------------------------------------------
+# TAB 3: Portfolio
+# ---------------------------------------------------------------------------
+def tab_portfolio():
+    st.header("My Portfolio")
+    st.caption("Track your actual holdings and P&L. Data comes from the Advisor scan.")
+
+    with st.sidebar:
+        st.header("Portfolio Parameters")
+        port_start = st.text_input("Portfolio start", "2024-01-01", key="port_start")
+        port_end = st.text_input("Portfolio end", pd.Timestamp.now().strftime("%Y-%m-%d"), key="port_end")
+        port_stoploss = st.number_input("Stoploss %", 1.0, 30.0, 7.0, step=0.5, key="port_stop") / 100.0
+        port_run = st.button("Load prices", type="primary", key="port_run")
+
+    if "holdings" not in st.session_state:
+        st.session_state.holdings = pd.DataFrame({
+            "ticker": ["", ""],
+            "quantity": [0, 0],
+            "avg_price": [0.0, 0.0],
+            "entry_date": ["", ""],
+        })
+
+    st.subheader("What you own")
+    st.caption("Edit your holdings below. Current price and P&L update after a scan.")
+
+    st.session_state.holdings = st.data_editor(
+        st.session_state.holdings,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "ticker": st.column_config.TextColumn("Ticker"),
+            "quantity": st.column_config.NumberColumn("Qty", min_value=0),
+            "avg_price": st.column_config.NumberColumn("Buy price (Rs)", min_value=0.0, format="Rs %.2f"),
+            "entry_date": st.column_config.TextColumn("Entry date"),
+        },
+    )
+
+    if port_run:
+        with st.spinner("Loading prices..."):
+            daily = load_prices(port_start, port_end, None)
+            current_prices = {}
+            for t in daily.columns:
+                v = daily[t].iloc[-1]
+                if pd.notna(v):
+                    current_prices[t] = float(v)
+
+        hs = st.session_state.holdings.copy()
+        hs["norm_ticker"] = hs["ticker"].str.upper().str.strip().apply(
+            lambda x: x if x.endswith(".NS") else x + ".NS" if x else "")
+        hs["current_price"] = hs["norm_ticker"].map(current_prices)
+        hs["inv_value"] = hs["quantity"] * hs["avg_price"]
+        hs["cur_value"] = hs["quantity"] * hs["current_price"]
+        hs["pnl_rs"] = hs["cur_value"] - hs["inv_value"]
+        hs["pnl_pct"] = (hs["current_price"] / hs["avg_price"] - 1.0)
+        hs["stoploss_price"] = hs["avg_price"] * (1.0 - port_stoploss)
+
+        display = pd.DataFrame({
+            "Ticker": hs["ticker"],
+            "Qty": hs["quantity"],
+            "Buy Price": hs["avg_price"].apply(lambda x: fmt_money(x) if x else "n/a"),
+            "Current": hs["current_price"].apply(lambda x: fmt_money(x) if pd.notna(x) else "n/a"),
+            "P&L %": hs["pnl_pct"].apply(lambda x: fmt_pct(x) if pd.notna(x) else "n/a"),
+            "P&L (Rs)": hs.apply(lambda r: fmt_money(r["pnl_rs"]) if pd.notna(r["current_price"]) else "n/a", axis=1),
+            "Stoploss": hs["stoploss_price"].apply(lambda x: fmt_money(x) if x else "n/a"),
+        })
+        st.dataframe(display.set_index("Ticker"), use_container_width=True)
+
+        valid = hs[hs["current_price"].notna() & (hs["avg_price"] > 0)]
+        if len(valid) > 0:
+            tot_inv = valid["inv_value"].sum()
+            tot_val = valid["cur_value"].sum()
+            tot_pnl = tot_val - tot_inv
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total invested", fmt_money(tot_inv))
+            c2.metric("Current value", fmt_money(tot_val))
+            c3.metric("Total P&L", fmt_money(tot_pnl),
+                       f"{tot_pnl / tot_inv:.1%}" if tot_inv else "")
+
+            sells = hs[(hs["pnl_pct"].notna()) & (hs["pnl_pct"] < -port_stoploss)]
+            if len(sells) > 0:
+                st.warning(f"Stoploss triggered: {', '.join(sells['ticker'].tolist())}")
+        else:
+            st.info("Enter holdings above and click 'Load prices' to see P&L.")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main():
+    tab1, tab2, tab3 = st.tabs(["Backtester", "Advisor", "Portfolio"])
+
+    with tab1:
+        tab_backtester()
+    with tab2:
+        tab_advisor()
+    with tab3:
+        tab_portfolio()
 
 
 if __name__ == "__main__":
