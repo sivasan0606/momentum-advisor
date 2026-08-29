@@ -1,4 +1,4 @@
-"""Unit tests for the monthly momentum advisor (advisor.py).
+"""Unit tests for the quarterly momentum advisor (advisor.py).
 
 Assert-based, run with:  python3 tests/test_advisor.py
 """
@@ -9,9 +9,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from advisor import (Action, AdvisorConfig, Position, build_email,
-                     build_html, build_payload, load_holdings, reconcile,
-                     next_scan_date_str, summary_html, summary_text,
-                     HOLDINGS_TEMPLATE)
+                     build_html, build_payload, build_reminder_email,
+                     load_holdings, reconcile, next_scan_date_str,
+                     summary_html, summary_text, HOLDINGS_TEMPLATE)
 
 
 def make_target(weights):
@@ -182,12 +182,19 @@ def test_build_html_embeds_payload_and_interactive_editor():
                       {"A.NS": 100.0}, "2026-07-31", [], "2026-08-02 10:30 IST", {"A.NS": 0.5})
     html = build_html(cfg, p, "2026-07-31")
     assert 'id="advisor-data"' in html
-    assert 'id="holdings-body"' in html          # editable holdings table
+    assert 'id="holdings-body"' in html          # editable holdings table (portfolio tab)
     assert 'id="buys-body"' in html
     assert 'id="cash-input"' in html             # new cash field
+    assert 'id="csv-file"' in html                # load-holdings CSV file input
+    assert 'Load CSV/Excel' in html
+    assert 'parseTradebookCsv' in html         # tradebook (buy+sell) import
+    assert 'id="v-realized"' in html           # booked P&L card
+    assert 'id="v-total-pnl"' in html          # overall P&L card
+    assert '/import-xlsx' in html              # Excel upload route
+    assert 'Load CSV/Excel' in html
     assert 'localStorage' in html                # persistence
     assert '"as_of": "2026-07-31"' in html       # embedded JSON payload
-    assert 'Rules &amp; Instructions' in html
+    assert 'Rules & Instructions' in html
     assert 'stoploss' in html.lower()
     # 1-year return column in every table
     assert html.count('1Y ret') == 4             # editor + BUY + HOLD + SELL headers
@@ -224,7 +231,7 @@ def test_build_email_attaches_html_and_correct_recipient():
     # plain-text body still present
     texts = [c.get_payload(decode=True).decode() for c in parts
              if c.get_content_type() == "text/plain"]
-    assert texts and "MOMENTUM ADVISOR - MONTHLY REPORT" in texts[0]
+    assert texts and "MOMENTUM ADVISOR - QUARTERLY REPORT" in texts[0]
     assert all("sivasan0606" not in t for t in texts)  # no credentials leaked
     # HTML body is the table summary, distinct from the attachment
     html_bodies = [c.get_payload(decode=True).decode() for c in parts
@@ -276,6 +283,33 @@ def test_summary_text_reports_buys_and_cash():
     assert "A 1,000 @ Rs 100" in text
     assert "Cash left" in text
     assert next_scan_date_str()  # returns a usable date string
+
+
+def test_build_reminder_email_has_steps_no_scan_no_attachment():
+    mail = {"sender": "me@gmail.com", "app_password": "abcd",
+            "recipient": "sivasan0606@gmail.com"}
+    msg = build_reminder_email(mail, "Tue 2026-08-04", port=8765)
+    assert msg["To"] == "sivasan0606@gmail.com"
+    assert msg["From"] == "me@gmail.com"
+    assert "quarterly scan" in msg["Subject"].lower()
+    assert "2026-08-04" in msg["Subject"]
+    parts = [c for c in msg.walk() if c.get_payload(decode=True)]
+    texts = [c.get_payload(decode=True).decode() for c in parts
+             if c.get_content_type() == "text/plain"]
+    html_bodies = [c.get_payload(decode=True).decode() for c in parts
+                   if c.get_content_type() == "text/html"]
+    assert texts and "QUARTERLY SCAN" in texts[0]
+    body = texts[0]
+    # step-by-step instructions for the manual scan
+    assert "serve.sh" in body
+    assert "advisor.py --serve" in body
+    assert "http://localhost:8765/advisor.html" in body
+    assert "Run scan" in body
+    # no report attachment, no credentials leak
+    assert not [c for c in parts if c.get_content_disposition() == "attachment"]
+    assert all("abcd" not in t and "me@gmail.com" not in t for t in texts)
+    assert html_bodies and "<ol>" in html_bodies[0] and "serve.sh" in html_bodies[0]
+
 
 
 def run_all():

@@ -48,8 +48,11 @@ HTML report.
 ```
 momentum_engine.py   # engine + CLI (Models A/B, overlays, alpha/beta)
 app.py               # Streamlit UI with configurable J/K/capital/max-stocks
-advisor.py           # monthly advisor -> interactive HTML page (Stage 2)
+advisor.py           # quarterly advisor -> advisor.html + portfolio.html (Stage 2)
 holdings.csv         # optional seed for the HTML holdings table
+quarterly_report.sh  # manual quarterly scan + email report
+quarterly_reminder.sh  # quarterly reminder email (no scan) - launchd agent
+install_quarterly.sh # install/remove the quarterly reminder LaunchAgent
 tests/test_momentum.py  # assert-based unit tests
 tests/test_advisor.py   # advisor reconciliation + HTML payload tests
 output/momentum_equity.png
@@ -83,43 +86,66 @@ Interactive app:
 streamlit run app.py
 ```
 
-## Monthly advisor (Stage 2) — `advisor.html`
+## Quarterly advisor (Stage 2) — `advisor.html` + `portfolio.html`
 
-Run this once a month on the scan day. It downloads fresh prices, computes the
-current JT target portfolio (top-10 by 12-month momentum, above 200-day SMA,
-equal weight), and writes ONE self-contained **interactive HTML page**.
+Run the scan yourself **once every 3 months** (a quarterly reminder email prompts
+you). It downloads fresh prices, computes the current JT target portfolio
+(top-10 by 12-month momentum, above 200-day SMA, equal weight), and writes TWO
+self-contained **interactive HTML pages** (same browser, shared holdings):
+
+- **`advisor.html`** — the advisor: momentum target list plus the live
+  BUY / TOP-UP / HOLD / SELL recommendation (rank, quantity, stoploss), new
+  cash input, and the rules/playbook.
+- **`portfolio.html`** — your actual portfolio: the editable "What you own"
+  table, CSV / Excel / Zerodha-tradebook import, and your overall P&L
+  (open + booked).
 
 ```bash
-# new cash this month = Rs 50,000
-python advisor.py --cash 50000
+# new cash this quarter = Rs 50,000
+python3 advisor.py --cash 50000
 ```
 
-Open `advisor.html` in any browser. The page lets you:
+Open both in any browser; they link to each other.
+
+**Portfolio page** (`portfolio.html`):
 
 - **Record what you bought** — enter/edit ticker, quantity, buy price and buy
   date in the "What you own" table. Edits save automatically to the browser's
   localStorage and persist between sessions.
-- **See everything live** — current price, P&L vs your buy price, and the
-  7% stoploss for every holding recompute as you type.
+- **See everything live** — current price, invested value, P&L vs your buy
+  price, and the 7% stoploss for every holding recompute as you type.
+- **Overall P&amp;L** — portfolio value, invested, open P&L (Rs), booked P&L
+  (from closed trades), and **Total P&L** (= open + booked).
+- **Load CSV / Excel / tradebook** — the **"Load CSV/Excel"** button bulk-loads
+  holdings instead of typing row by row. A simple `ticker,qty,price,date` CSV
+  adds/updates holdings; a Zerodha tradebook (`symbol,quantity,price,
+  trade_type,trade_date,...`) rebuilds open positions from buys and sells,
+  applies **sells** to your portfolio, and books the realized P&L of closed
+  trades. **.xlsx** files are also supported (converted server-side by the
+  local server — start it with `--serve` for Excel imports; CSV works even
+  opened as a plain file).
+
+**Advisor page** (`advisor.html`):
+
 - **Get the recommendation** — BUY / TOP-UP / HOLD / SELL with exact
   whole-share quantities, target weights, momentum rank, and sell reasons,
-  all recomputed against your entered holdings.
-- **Adjust new cash** — change the cash field at the top and the buy orders
-  update instantly.
+  all recomputed against your portfolio (from localStorage).
+- **Adjust new cash** — change the cash field and the buy orders update
+  instantly.
 
-The CSV is now only a *seed*: `holdings.csv` (optional) pre-fills the table on
-first open. Everything after that is edited in the HTML.
+`holdings.csv` is only a *seed*: it pre-fills the table on first open.
+Everything after that is edited on the portfolio page.
 
 Options: `--cash <amount>`, `--max-stocks 10`, `--stoploss 0.07`,
-`--model A|B`, `--j 12`, `--k 3`, `--end <date>`, `--holdings <file>`, `--out <file>`. Run it
-each month to refresh prices and re-embed the latest momentum targets.
+`--model A|B`, `--j 12`, `--k 3`, `--end <date>`, `--holdings <file>`, `--out <file>`.
+Run it every 3 months to refresh prices and re-embed the latest momentum targets.
 
 ### Run-scan button (live refresh)
 
 For a one-click refresh from the page, host it locally:
 
 ```bash
-python advisor.py --serve --cash 50000     # default port 8765
+python3 advisor.py --serve --cash 50000     # default port 8765
 ```
 
 Then open **http://localhost:8765/advisor.html**. The **"Run scan"** button at
@@ -128,13 +154,14 @@ targets, rewrites the page) and reloads it automatically. Your entered holdings
 and cash stay saved in the browser. Press Ctrl+C to stop the server.
 
 > The button needs the local server. Opening `advisor.html` directly as a file
-> still works for editing/review, but "Run scan" will show a hint telling you to
-> use `--serve`.
+> still works for editing/review, but "Run scan" will show a hint telling you to use `--serve`.
 
-### Automatic monthly run + email report
 
-The scan runs and emails the report to you on the **1st of every month at
-19:30** (local time) via a launchd LaunchAgent (`com.momentum.advisor.monthly`).
+### Quarterly reminder email (auto) + manual scan
+
+A launchd LaunchAgent (`com.momentum.advisor.quarterly`) emails you a reminder
+on the **4th of Feb / May / Aug / Nov at 21:00** (local time). The email only
+contains step-by-step instructions — the scan itself is manual.
 
 **One-time email setup** — Gmail requires an App Password (regular password
 won't work):
@@ -151,43 +178,43 @@ won't work):
 
 4. Send a test email:
    ```bash
-   ./monthly_report.sh --test-email
+   ./quarterly_report.sh --test-email
    ```
-5. Install the schedule (installs after a successful test email):
+5. Install the reminder schedule (installs after a successful test email):
    ```bash
-   ./install_monthly.sh
+   ./install_quarterly.sh
    ```
 
-The monthly email contains an HTML summary with **BUY / TOP-UP / HOLD / SELL
-tables** (ticker, quantity, price, amount, rank, stoploss, P&L, sell reason)
-plus portfolio stats (value, proceeds, cash left, next scan date) and the
-interactive `advisor.html` as an attachment.
+The reminder email walks you through the manual scan: start the server, open
+the report, click **Run scan**, verify holdings/cash, then execute the
+BUY / TOP-UP / HOLD / SELL orders.
 
-Manage it:
+Run things manually:
 
 ```bash
-./monthly_report.sh              # run the scan + email now (manual)
-./install_monthly.sh --test-only # send a test email without scheduling
-./install_monthly.sh --remove    # stop the monthly schedule
+./quarterly_report.sh              # manual scan + email report now
+./quarterly_reminder.sh            # send the reminder email now (no scan)
+./install_quarterly.sh --remove    # stop the quarterly reminder schedule
 ```
 
-Logs: `logs/monthly_report.log`. To change the day/time, edit `HOUR`/`MINUTE`
-(and `Day`) in `install_monthly.sh`, re-run it, or adjust the plist at
-`~/Library/LaunchAgents/com.momentum.advisor.monthly.plist` and reload with
-`launchctl kickstart -k gui/$(id -u)/com.momentum.advisor.monthly`.
+Logs: `logs/quarterly_report.log`, `logs/quarterly_reminder.log`. To change the
+day/time, edit `install_quarterly.sh` (the `Month`/`Day`/`Hour`/`Minute` values)
+and re-run it, or adjust the plist at
+`~/Library/LaunchAgents/com.momentum.advisor.quarterly.plist` and reload with
+`launchctl kickstart -k gui/$(id -u)/com.momentum.advisor.quarterly`.
 
 ### Rules / playbook (as printed in the report)
 
-- **Scan**: last trading day of each month, after market close. Check prices
-  daily (~2 min) only to catch stoploss breaks.
-- **Rebalance**: monthly, same scan day. **Top-up only** — keep existing
-  shares, never trim an over-weighted holding while it stays in the target
-  list. New cash buys the highest-rank unmet orders first.
+- **Scan**: once every 3 months, on the 4th of Feb / May / Aug / Nov, after
+  market close. Check prices daily (~2 min) only to catch stoploss breaks.
+- **Rebalance**: quarterly, on the same scan day. **Top-up only** — keep
+  existing shares, never trim an over-weighted holding while it stays in the
+  target list. New cash buys the highest-rank unmet orders first.
 - **Exit**:
   - **Stoploss (default 7%)**: any holding below `entry × (1 − 0.07)` is sold
     at the next day's open — do not wait for rebalance.
   - **Dropped out**: no longer in the top-10 momentum names, or price below the
-    200-day SMA, is sold at rebalance.
+    200-day SMA, is sold at the quarterly rebalance.
 - **Buy**: top-decile 12-month momentum names trading above the 200-day SMA,
   up to 10 holdings, whole shares only; leftover cash carries forward.
 

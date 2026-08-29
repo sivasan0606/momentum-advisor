@@ -1,18 +1,18 @@
 #!/bin/bash
-# Monthly momentum report: run the scan and email the report to the recipient
-# in mail_config.json. Called by the com.momentum.advisor.monthly LaunchAgent
-# on the 1st of each month at 7:30 PM (local time).
+# Quarterly momentum report: run the scan manually and email the report to the
+# recipient in mail_config.json. Use this when you do your once-every-3-months
+# scan; a separate reminder (quarterly_reminder.sh) just tells you when.
 #
-#   ./monthly_report.sh                 run the scan + send email now
-#   ./monthly_report.sh --test-email    send a test email (no scan)
+#   ./quarterly_report.sh               run the scan + send email now
+#   ./quarterly_report.sh --test-email  send a test email (no scan)
 cd "$(dirname "$0")"
 PROJECT="$(pwd)"
 PYBIN=$(command -v python3)
-LOGFILE="$PROJECT/logs/monthly_report.log"
+LOGFILE="$PROJECT/logs/quarterly_report.log"
 
 mkdir -p logs
 
-echo "=== Monthly momentum report: $(date) ===" >> "$LOGFILE"
+echo "=== Quarterly momentum report: $(date) ===" >> "$LOGFILE"
 
 if [ "${1:-}" = "--test-email" ]; then
   "$PYBIN" "$PROJECT/advisor.py" --test-email --email-config "$PROJECT/mail_config.json" \

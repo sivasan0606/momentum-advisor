@@ -3,6 +3,7 @@ mail_config.json
 
 # generated reports
 advisor.html
+portfolio.html
 output/
 output_smoke/
 

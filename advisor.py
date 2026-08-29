@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Monthly momentum advisor (Stage 2) -> single self-contained HTML page.
+"""Quarterly momentum advisor (Stage 2) -> single self-contained HTML page.
 
-Scans the market on the monthly rebalance date and emits ONE interactive HTML
+Scans the market every quarter (4th of Feb/May/Aug/Nov) and emits ONE interactive HTML
 file (advisor.html) that:
 
   * embeds the current JT-1993 momentum target portfolio (top decile by
@@ -295,9 +295,9 @@ button { border:1px solid var(--line); background:var(--panel); border-radius:6p
          padding:6px 14px; font-size:13px; cursor:pointer; color:var(--ink); }
 button:hover { background:#eaeef2; }
 button.danger { color:var(--sell); }
-.scan-status { display:none; margin:6px 0 0; padding:8px 12px; border-radius:8px; font-size:13px; }
-.scan-status.ok { background:#dafbe1; color:var(--buy); }
-.scan-status.err { background:#ffebe9; color:var(--sell); }
+.scan-status { display:none; margin:6px 0 0; padding:10px 14px; border-radius:8px; font-size:13px; font-weight:500; }
+.scan-status.ok { background:#dafbe1; color:var(--buy); border:1px solid #4ac26b; }
+.scan-status.err { background:#ffebe9; color:var(--sell); border:1px solid #f85149; }
 .notes { background:var(--panel); border:1px solid var(--line); border-radius:8px;
          padding:12px 16px; font-size:13px; color:var(--muted); margin-top:8px; }
 .rules { background:var(--panel); border:1px solid var(--line); border-radius:8px;
@@ -307,6 +307,10 @@ button.danger { color:var(--sell); }
 .rules li { margin:3px 0; }
 .footer { margin-top:26px; font-size:11.5px; color:var(--muted);
           border-top:1px solid var(--line); padding-top:10px; }
+.tab-bar { display:flex; gap:6px; border-bottom:2px solid var(--line); margin:6px 0 18px; }
+.tab { border:1px solid var(--line); border-bottom:none; border-radius:8px 8px 0 0;
+       padding:9px 22px; font-size:14px; font-weight:600; color:var(--muted); background:var(--panel); }
+.tab.active { background:#fff; color:var(--buy); border-color:var(--buy); }
 @media print { body { padding:0; } .wrap { max-width:none; } }
 """
 
@@ -346,24 +350,45 @@ function ret1yCell(t) {
 }
 
 // ---------- holdings editor ----------
+function fmtSignedMoney(v) {
+  const n = Math.round(v || 0);
+  return (n >= 0 ? '+' : '') + 'Rs ' + Math.abs(n).toLocaleString('en-IN');
+}
 function renderEditor() {
   const tbody = document.getElementById('holdings-body');
   tbody.innerHTML = '';
+  let totQty = 0, totInv = 0, totVal = 0;
   holdings.forEach((h, i) => {
     const tr = document.createElement('tr');
     const px = DATA.prices[h.ticker];
     const cur = px ? fmtMoney(px) : 'n/a';
-    const pnl = (px && h.avg_price) ? fmtPct(px / h.avg_price - 1) : 'n/a';
+    const invVal = (h.quantity && h.avg_price) ? h.quantity * h.avg_price : 0;
+    const pnlPct = (px && h.avg_price) ? fmtPct(px / h.avg_price - 1) : 'n/a';
+    const pnlRs = (px && h.avg_price) ? (px - h.avg_price) * h.quantity : 0;
+    const pnlRsFmt = (px && h.avg_price) ? fmtSignedMoney(pnlRs) : 'n/a';
     const stop = (px && h.avg_price) ? fmtMoney(h.avg_price * (1 - DATA.stoploss)) : 'n/a';
+    const curVal = (px && h.quantity) ? h.quantity * px : invVal;
+    totQty += h.quantity || 0; totInv += invVal; totVal += curVal;
     tr.innerHTML =
       `<td><input type="text" value="${h.ticker.replace('.NS', '')}" data-i="${i}" data-f="ticker"></td>` +
       `<td><input type="number" value="${h.quantity}" data-i="${i}" data-f="quantity"></td>` +
       `<td><input type="number" value="${h.avg_price}" data-i="${i}" data-f="avg_price"></td>` +
+      `<td>${fmtMoney(invVal)}</td>` +
       `<td><input type="date" value="${h.entry_date || ''}" data-i="${i}" data-f="entry_date"></td>` +
-      `<td>${cur}</td>` + ret1yCell(h.ticker) + `<td>${pnl}</td><td>${stop}</td>` +
+      `<td>${cur}</td>` + ret1yCell(h.ticker) +
+      `<td>${pnlPct}</td><td>${pnlRsFmt}</td><td>${stop}</td>` +
       `<td><button class="danger" data-i="${i}" data-del="1">x</button></td>`;
     tbody.appendChild(tr);
   });
+  const tfoot = document.getElementById('holdings-total');
+  if (tfoot) {
+    const totPnl = totVal - totInv;
+    const totPnlPct = totInv ? (totPnl / totInv * 100).toFixed(2) + '%' : '0.00%';
+    tfoot.innerHTML = '<tr style="font-weight:700"><td>TOTAL</td><td>' + fmtQty(totQty) +
+      '</td><td></td><td>' + fmtMoney(totInv) + '</td><td></td><td>' + fmtMoney(totVal) +
+      '</td><td></td><td>' + totPnlPct + '</td><td>' + fmtSignedMoney(totPnl) +
+      '</td><td></td><td></td></tr>';
+  }
 }
 
 function addRow() {
@@ -390,11 +415,13 @@ document.addEventListener('click', (e) => {
 
 // ---------- cash ----------
 const cashInput = document.getElementById('cash-input');
-cashInput.value = newCash;
-cashInput.addEventListener('input', () => {
-  newCash = Number(cashInput.value) || 0;
-  saveCash(); recompute();
-});
+if (cashInput) {
+  cashInput.value = newCash;
+  cashInput.addEventListener('input', () => {
+    newCash = Number(cashInput.value) || 0;
+    saveCash(); recompute();
+  });
+}
 
 // ---------- reconciliation ----------
 function recompute() {
@@ -460,14 +487,19 @@ function recompute() {
     let qty = Math.floor(amount / px);
     if (qty <= 0) continue;
     let cost = qty * px;
-    if (cost > remaining) { qty = Math.floor(remaining / px); cost = qty * px; if (qty <= 0) continue; }
-    remaining -= cost;
-    buys.push({ ticker: t.ticker, kind, qty, price: px, amount: cost,
-                weight: t.weight, rank: t.rank, stop: px * (1 - stoploss) });
+    const shortfall = cost > remaining;
+    if (shortfall) { qty = Math.floor(remaining / px); cost = qty * px; }
+    if (qty > 0) remaining -= cost;
+    buys.push({ ticker: t.ticker, kind, qty: qty || Math.floor(amount / px), price: px,
+                amount: cost || amount, weight: t.weight, rank: t.rank,
+                stop: px * (1 - stoploss), shortfall });
   }
 
+  const bookedPnl = sells.reduce((s, sl) => s + (sl.price - sl.avg) * sl.qty, 0);
+  const totalPnl = (holdingsValue - costBasis) + bookedPnl;
+
   renderCards(holdValue, holdingsValue, costBasis, remaining, sellProceeds,
-              buys, holds.length, missing);
+              buys, holds.length, missing, bookedPnl, totalPnl);
   renderTable('buys-body', buys, buysRow);
   renderTable('holds-body', holds, holdRow);
   renderTable('sells-body', sells, sellRow);
@@ -475,30 +507,42 @@ function recompute() {
 }
 
 function renderCards(holdValue, holdingsValue, costBasis, cashLeft, sellProceeds,
-                     buys, nHolds, missing) {
+                     buys, nHolds, missing, bookedPnl, totalPnl) {
   const buyTotal = buys.reduce((s, b) => s + b.amount, 0);
   setText('v-portfolio', fmtMoney(holdingsValue + newCash), 'your holdings + new cash');
-  setText('v-invested', fmtMoney(holdingsValue), nHolds + ' held / ' + DATA.target.length + ' target');
+  setText('v-invested', fmtMoney(costBasis), nHolds + ' held / ' + DATA.target.length + ' target');
   setText('v-cash', fmtMoney(cashLeft), 'cash after executing the plan');
   setText('v-buys', fmtMoney(buyTotal), buys.length + ' order' + (buys.length === 1 ? '' : 's'));
   setText('v-sells', fmtMoney(sellProceeds), 'proceeds from sells');
-  const pnl = holdingsValue - costBasis;
-  setText('v-pnl', fmtMoney(pnl), fmtPct(costBasis ? pnl / costBasis : 0) + ' on cost',
-          pnl >= 0 ? 'buy' : 'sell');
+  const openPnl = holdingsValue - costBasis;
+  setText('v-pnl', fmtMoney(openPnl), fmtPct(costBasis ? openPnl / costBasis : 0) + ' on cost',
+          openPnl >= 0 ? 'buy' : 'sell');
+  setText('v-advisor-pnl', fmtMoney(openPnl), fmtPct(costBasis ? openPnl / costBasis : 0) + ' on cost',
+          openPnl >= 0 ? 'buy' : 'sell');
+  setText('v-realized', fmtMoney(bookedPnl), bookedPnl >= 0 ? 'realized gain' : 'realized loss',
+          bookedPnl >= 0 ? 'buy' : 'sell');
+  setText('v-total-pnl', fmtMoney(totalPnl),
+          fmtPct(costBasis ? totalPnl / costBasis : 0) + ' total',
+          totalPnl >= 0 ? 'buy' : 'sell');
 }
 function setText(id, v, sub, cls) {
   const el = document.getElementById(id);
+  if (!el) return;
   el.textContent = v;
-  const s = el.parentElement.querySelector('.s');
+  const s = el.parentElement ? el.parentElement.querySelector('.s') : null;
   if (s) s.textContent = sub || '';
   if (cls) el.style.color = getComputedStyle(document.body).getPropertyValue('--' + cls).trim();
 }
 function renderTable(id, rows, rowFn) {
-  document.getElementById(id).innerHTML = rows.map(rowFn).join('');
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = rows.map(rowFn).join('');
 }
 function buysRow(b) {
+  const tag = b.shortfall
+    ? `<span class="tag sell">needs cash</span>`
+    : `<span class="tag buy">${b.kind}</span>`;
   return `<tr><td>${b.ticker.replace('.NS', '')}</td>` +
-    `<td><span class="tag buy">${b.kind}</span></td>` +
+    `<td>${tag}</td>` +
     `<td>#${b.rank}</td><td>${fmtMoney(b.price)}</td>` + ret1yCell(b.ticker) +
     `<td>${fmtQty(b.qty)}</td>` +
     `<td>${fmtMoney(b.amount)}</td><td>${fmtPct(b.weight)}</td><td>${fmtMoney(b.stop)}</td></tr>`;
@@ -531,35 +575,190 @@ function renderMissing(missing) {
 }
 
 function setStatus(msg, isError) {
-  const el = document.getElementById('scan-status');
-  if (!el) return;
-  el.className = 'scan-status ' + (isError ? 'err' : 'ok');
-  el.textContent = msg;
-  el.style.display = msg ? '' : 'none';
+  document.querySelectorAll('.scan-status').forEach(el => {
+    el.className = 'scan-status ' + (isError ? 'err' : (msg ? 'ok' : ''));
+    el.textContent = msg;
+    el.style.display = msg ? '' : 'none';
+  });
 }
 
-// ---------- next scan date (last weekday of the current month) ----------
-function lastWeekdayOfMonth(y, m) {
-  const d = new Date(y, m + 1, 0);   // last calendar day of month (m 0-11)
-  const dow = d.getDay();            // 0=Sun ... 6=Sat
-  if (dow === 0) d.setDate(d.getDate() - 2);
-  else if (dow === 6) d.setDate(d.getDate() - 1);
-  return d;
+// ---------- next scan date (4th of Feb/May/Aug/Nov) ----------
+function nextQuarterlyScanDate() {
+  const now = new Date();
+  const months = [1, 4, 7, 10]; // Feb=1, May=4, Aug=7, Nov=10 (0-indexed)
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  for (let offset = 0; offset < 4; offset++) {
+    const m = months[(now.getMonth() + offset) % 4];
+    const y = now.getFullYear() + Math.floor((now.getMonth() + offset) / 12);
+    // If same month and date already passed, skip to next quarter
+    const d = new Date(y, m, 4);
+    if (d >= new Date(now.getFullYear(), now.getMonth(), now.getDate())) {
+      const iso = d.getFullYear() + '-' +
+        String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      return names[d.getDay()] + ' ' + iso;
+    }
+  }
+  return '';
 }
 function renderNextScan() {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  let d = lastWeekdayOfMonth(now.getFullYear(), now.getMonth());
-  if (d < today) d = lastWeekdayOfMonth(now.getFullYear(), now.getMonth() + 1);
-  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const iso = d.getFullYear() + '-' +
-    String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   const el = document.getElementById('next-scan');
-  if (el) el.textContent = names[d.getDay()] + ' ' + iso;
+  if (el) el.textContent = nextQuarterlyScanDate();
 }
 
-try { renderNextScan(); renderEditor(); recompute(); }
+// ---------- CSV / Excel tradebook import ----------
+function splitCsvLine(line) {
+  const result = []; let cur = ''; let inQ = false;
+  for (let c = 0; c < line.length; c++) {
+    const ch = line[c];
+    if (inQ) {
+      if (ch === '"' && line[c+1] === '"') { cur += '"'; c++; }
+      else if (ch === '"') inQ = false;
+      else cur += ch;
+    } else {
+      if (ch === '"') inQ = true;
+      else if (ch === ',') { result.push(cur); cur = ''; }
+      else cur += ch;
+    }
+  }
+  result.push(cur);
+  return result;
+}
+function csvTicker(fields) {
+  let t = (fields[0] || '').trim().toUpperCase().replace(/\\s+/g, '');
+  t = t.replace(/-BE$|-EQ$|-BZ$/i, '');
+  if (t && !t.endsWith('.NS')) t += '.NS';
+  return t;
+}
+function csvNum(fields, idx) {
+  const v = (fields[idx] || '').trim().replace(/,/g, '');
+  return v ? Number(v) : 0;
+}
+function normalizeDate(s) {
+  if (!s) return '';
+  s = s.trim();
+  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\\d{2})\\/(\\d{2})\\/(\\d{4})$/);
+  if (m) return m[3] + '-' + m[2] + '-' + m[1];
+  return s;
+}
+function parseTradebookCsv(text) {
+  const lines = text.trim().split('\\n').filter(l => l.trim());
+  if (!lines.length) return { holdings: [], booked: {}, totalBooked: 0 };
+  const hdr = splitCsvLine(lines[0]).map(h => h.trim().toLowerCase());
+  const ti = hdr.indexOf('symbol') !== -1 ? hdr.indexOf('symbol') : 0;
+  const qi = hdr.indexOf('qty') !== -1 ? hdr.indexOf('qty') : (hdr.indexOf('quantity') !== -1 ? hdr.indexOf('quantity') : 1);
+  const pi = hdr.indexOf('price') !== -1 ? hdr.indexOf('price') : (hdr.indexOf('avg.') !== -1 ? hdr.indexOf('avg.') : 2);
+  const di = hdr.indexOf('trade_date') !== -1 ? hdr.indexOf('trade_date') : (hdr.indexOf('date') !== -1 ? hdr.indexOf('date') : -1);
+  const tti = hdr.indexOf('trade_type') !== -1 ? hdr.indexOf('trade_type') : -1;
+  const buys = {}, sells = {};
+  for (let i = 1; i < lines.length; i++) {
+    const f = splitCsvLine(lines[i]);
+    const tk = csvTicker(f);
+    if (!tk) continue;
+    const qty = Math.abs(csvNum(f, qi));
+    const price = csvNum(f, pi);
+    const dt = di >= 0 ? normalizeDate(f[di]) : '';
+    const tradeType = tti >= 0 ? (f[tti] || '').trim().toUpperCase() : '';
+    if (tradeType === 'SELL' || tradeType === 'S' || qty < 0) {
+      const sq = Math.abs(qty);
+      if (!sells[tk]) sells[tk] = { qty: 0, proceeds: 0, avgBuy: 0, buyQty: 0 };
+      sells[tk].qty += sq;
+      sells[tk].proceeds += sq * price;
+    } else {
+      if (!buys[tk]) buys[tk] = { qty: 0, totalCost: 0, avgPrice: 0, date: '' };
+      const oldTotal = buys[tk].qty * buys[tk].avgPrice;
+      buys[tk].qty += qty;
+      buys[tk].totalCost = oldTotal + qty * price;
+      buys[tk].avgPrice = buys[tk].totalCost / buys[tk].qty;
+      if (dt && !buys[tk].date) buys[tk].date = dt;
+    }
+  }
+  for (const tk in sells) {
+    if (buys[tk]) sells[tk].avgBuy = buys[tk].avgPrice;
+  }
+  const result = [];
+  for (const tk in buys) {
+    const b = buys[tk];
+    const held = b.qty - (sells[tk] ? sells[tk].qty : 0);
+    if (held > 0) {
+      result.push({ ticker: tk, quantity: held, avg_price: b.avgPrice, entry_date: b.date });
+    }
+  }
+  let totalBooked = 0;
+  const booked = {};
+  for (const tk in sells) {
+    const s = sells[tk];
+    const pnl = (s.avgBuy > 0) ? (s.proceeds - s.qty * s.avgBuy) : 0;
+    booked[tk] = pnl;
+    totalBooked += pnl;
+  }
+  return { holdings: result, booked: booked, totalBooked: totalBooked };
+}
+function promptCsvLoad() {
+  const fi = document.getElementById('csv-file');
+  if (fi) fi.click();
+}
+const _csvEl = document.getElementById('csv-file');
+if (_csvEl) _csvEl.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+    setStatus('Uploading Excel file…', false);
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const r = await fetch('/import-xlsx', { method: 'POST', body: fd });
+      if (!r.ok) { const t = await r.text(); setStatus('Excel import failed: ' + t, true); return; }
+      const csvText = await r.text();
+      applyCsvText(csvText);
+    } catch (err) { setStatus('Excel upload error: ' + err.message, true); }
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (ev) => applyCsvText(ev.target.result);
+  reader.readAsText(file);
+});
+function applyCsvText(text) {
+  const res = parseTradebookCsv(text);
+  if (!res.holdings.length && !res.totalBooked) {
+    setStatus('No valid trade rows found. Expected a Zerodha tradebook with columns: symbol, quantity, price, trade_type, trade_date. The file you uploaded may be a P&L report instead of a tradebook.', true);
+    return;
+  }
+  let replaced = 0, added = 0;
+  for (const h of res.holdings) {
+    const idx = holdings.findIndex(x => x.ticker === h.ticker);
+    if (idx >= 0) { holdings[idx] = h; replaced++; }
+    else { holdings.push(h); added++; }
+  }
+  saveHoldings(); renderEditor(); recompute();
+  let msg = 'Loaded ' + res.holdings.length + ' holding' + (res.holdings.length === 1 ? '' : 's') +
+            ' (' + added + ' new, ' + replaced + ' updated)';
+  if (res.totalBooked) msg += '. Booked P&L: ' + fmtSignedMoney(res.totalBooked);
+  setStatus(msg, false);
+}
+
+// ---------- export recommendations as CSV (server-side) ----------
+function exportCsv() {
+  window.location.href = '/export';
+}
+
+// ---------- tab switching ----------
+function showTab(name) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.style.display = 'none');
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  const pane = document.getElementById('tab-' + name);
+  if (pane) pane.style.display = '';
+}
+
+try { renderNextScan(); renderEditor(); recompute(); showTab('portfolio'); }
 catch (e) { setStatus('Page script error: ' + (e && e.message ? e.message : e), true); }
+
+// bind export button via listener (onclick can be unreliable across tabs)
+var _exportBtn = document.getElementById('export-btn');
+if (_exportBtn) _exportBtn.addEventListener('click', exportCsv);
+
+
 
 // ---------- run scan (POST /scan to the local advisor server) ----------
 async function runScan() {
@@ -573,28 +772,11 @@ async function runScan() {
     btn.disabled = false; btn.textContent = 'Run scan';
     return;
   }
-  const LS_TOKEN = 'momentum_advisor_scan_token';
-  function getToken() {
-    let t = localStorage.getItem(LS_TOKEN);
-    if (!t) {
-      t = prompt('Enter the scan token to run a scan on this server:') || '';
-      if (t) localStorage.setItem(LS_TOKEN, t);
-    }
-    return t;
-  }
-
   setStatus('Scanning — refreshing prices and momentum targets…', false);
   try {
-    const headers = {};
-    const token = getToken();
-    if (token) headers['X-Scan-Token'] = token;
-    const r = await fetch('/scan', { method: 'POST', headers });
+    const r = await fetch('/scan', { method: 'POST' });
     const j = await r.json();
-    if (r.status === 401) {
-      localStorage.removeItem(LS_TOKEN);
-      setStatus('Scan failed: ' + (j.message || 'Unauthorized — check the scan token.'), true);
-      btn.disabled = false; btn.textContent = 'Run scan';
-    } else if (j.status === 'ok') {
+    if (j.status === 'ok') {
       setStatus('Scan complete (data as of ' + (j.as_of || '?') + ') — reloading…', false);
       setTimeout(() => { window.location.href = 'advisor.html?t=' + Date.now(); }, 700);
     } else {
@@ -632,7 +814,7 @@ def build_html(cfg: AdvisorConfig, payload: dict, as_of: str) -> str:
   2-12 after formation, so do not flip early.</li></ol>
 
   <h3>When to rebalance</h3>
-  <ol><li>Rebalance monthly, on the same scan day (after close), by executing this page's orders.</li>
+  <ol><li>Rebalance quarterly, on the 4th of Feb/May/Aug/Nov (after close), by executing this page's orders.</li>
   <li>Top-up only: keep existing shares; never trim an over-weighted holding while it remains in the
   target list. This keeps turnover (and tax/cost) low.</li>
   <li>New cash buys the highest-rank unmet BUY / TOP-UP orders first.</li></ol>
@@ -662,37 +844,67 @@ def build_html(cfg: AdvisorConfig, payload: dict, as_of: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Momentum Advisor — {as_of}</title>
+<title>Momentum Advisor - {as_of}</title>
 <style>{_CSS}</style></head>
 <body><div class="wrap">
-<h1>Monthly Momentum Advisor</h1>
+<h1>Momentum Advisor</h1>
 <div class="sub">JT-1993 Model {payload['model']} (J={payload['j']}, K={payload['k']}) &middot;
 target top {payload['max_stocks']} by 12-month momentum, above 200-day SMA, equal weight &middot;
 data as of <b>{as_of}</b> &middot; <b>last scan: {payload['scan_time']}</b>.
-<b>Next scan: <span id="next-scan">…</span>, after close</b>.
-<button id="scan-btn" onclick="runScan()" style="float:right">Run scan</button></div>
+<b>Next scan: <span id="next-scan">...</span>, after close</b>.
+<button id="scan-btn" onclick="runScan()" style="float:right">Run scan</button>
+<button id="export-btn" onclick="exportCsv()" style="float:right; margin-right:8px">Export CSV</button></div>
 <div id="scan-status"></div>
 
-<div class="cards">
-  <div class="card"><div class="k">Portfolio value</div><div class="v" id="v-portfolio">—</div><div class="s"></div></div>
-  <div class="card"><div class="k">Invested</div><div class="v" id="v-invested">—</div><div class="s"></div></div>
-  <div class="card"><div class="k">Cash after plan</div><div class="v" id="v-cash">—</div><div class="s"></div></div>
-  <div class="card"><div class="k">Buy orders</div><div class="v" id="v-buys">—</div><div class="s"></div></div>
-  <div class="card"><div class="k">Sell proceeds</div><div class="v" id="v-sells">—</div><div class="s"></div></div>
-  <div class="card"><div class="k">P&amp;L vs cost</div><div class="v" id="v-pnl">—</div><div class="s"></div></div>
+<div class="tab-bar">
+  <button class="tab active" data-tab="portfolio" onclick="showTab('portfolio')">Portfolio</button>
+  <button class="tab" data-tab="advisor" onclick="showTab('advisor')">Advisor</button>
 </div>
 
-<h2>What you own — edit your buys (ticker, quantity, buy price)</h2>
-<p class="notes">Enter or edit what you have actually bought. Changes save automatically in this
-browser. Current price, P&amp;L vs your buy price, and the stoploss are computed live.
-New cash this month:
-<input type="number" class="cash" id="cash-input" step="1000" min="0">&nbsp;
-<button onclick="addRow()">+ Add holding</button></p>
+<div id="tab-portfolio" class="tab-pane" style="display: block;">
+<h1>My Portfolio</h1>
+<div class="sub">Your actual holdings and overall P&L &middot; data as of <b>{as_of}</b>
+(last scan {payload['scan_time']}) &middot;
+<a href="#" onclick="showTab('advisor'); return false;">Advisor page</a></div>
+
+<div class="cards">
+  <div class="card"><div class="k">Portfolio value</div><div class="v" id="v-portfolio">-</div><div class="s"></div></div>
+  <div class="card"><div class="k">Invested</div><div class="v" id="v-invested">-</div><div class="s"></div></div>
+  <div class="card"><div class="k">Open P&L (Rs)</div><div class="v" id="v-pnl">-</div><div class="s"></div></div>
+  <div class="card"><div class="k">Booked P&L</div><div class="v" id="v-realized">-</div><div class="s"></div></div>
+  <div class="card"><div class="k">Total P&L</div><div class="v" id="v-total-pnl">-</div><div class="s"></div></div>
+</div>
+
+<h2>What you own</h2>
+<p class="notes">Edit rows directly or bulk-load:
+<button onclick="addRow()">+ Add holding</button>&nbsp;
+<button onclick="promptCsvLoad()">Load CSV/Excel (tradebook)</button>
+<input type="file" id="csv-file" accept=".csv,text/csv,.xlsx,.xls" style="display:none">
+&nbsp; Current price, Inv value, and P&L come from the last scan.</p>
 <table class="editor">
-<tr><th>Ticker</th><th>Qty</th><th>Buy price</th><th>Buy date</th>
-<th>Current</th><th>1Y ret</th><th>P&amp;L</th><th>Stoploss</th><th></th></tr>
+<tr><th>Ticker</th><th>Qty</th><th>Buy price</th><th>Inv value</th><th>Buy date</th>
+<th>Current</th><th>1Y ret</th><th>P&L %</th><th>P&L (Rs)</th><th>Stoploss</th><th></th></tr>
 <tbody id="holdings-body"></tbody>
+<tfoot id="holdings-total"></tfoot>
 </table>
+<div class="notes" id="missing-note" style="display:none"></div>
+</div>
+
+<div id="tab-advisor" class="tab-pane" style="display: none;">
+<h1>Quarterly Momentum Advisor</h1>
+<div class="sub">JT-1993 Model {payload['model']} (J={payload['j']}, K={payload['k']}) &middot;
+target top {payload['max_stocks']} by 12-month momentum, above 200-day SMA, equal weight &middot;
+data as of <b>{as_of}</b> &middot; <b>last scan: {payload['scan_time']}</b>.</div>
+
+<div class="cards">
+  <div class="card"><div class="k">Cash after plan</div><div class="v" id="v-cash">-</div><div class="s"></div></div>
+  <div class="card"><div class="k">Buy orders</div><div class="v" id="v-buys">-</div><div class="s"></div></div>
+  <div class="card"><div class="k">Sell proceeds</div><div class="v" id="v-sells">-</div><div class="s"></div></div>
+  <div class="card"><div class="k">P&L vs cost</div><div class="v" id="v-advisor-pnl">-</div><div class="s"></div></div>
+</div>
+
+<p class="notes">Enter new cash for this quarter:
+<input type="number" class="cash" id="cash-input" step="1000" min="0">&nbsp; (used to size the buy orders below)</p>
 
 <h2>BUY / TOP-UP</h2>
 <table>
@@ -705,25 +917,26 @@ under-weighted holdings, in momentum rank order.</p>
 
 <h2>HOLD</h2>
 <table>
-<tr><th>Ticker</th><th>Qty</th><th>Avg entry</th><th>Current</th><th>1Y ret</th><th>P&amp;L</th>
+<tr><th>Ticker</th><th>Qty</th><th>Avg entry</th><th>Current</th><th>1Y ret</th><th>P&L</th>
 <th>Stoploss</th><th>Target wt</th></tr>
 <tbody id="holds-body"></tbody>
 </table>
-<p class="notes">Keep these as-is. No trimming — over-weighted names are left alone until they drop
+<p class="notes">Keep these as-is. No trimming - over-weighted names are left alone until they drop
 out of the target list.</p>
 
 <h2>SELL</h2>
 <table>
-<tr><th>Ticker</th><th>Qty</th><th>Price</th><th>1Y ret</th><th>P&amp;L</th><th>Proceeds</th><th>Reason</th></tr>
+<tr><th>Ticker</th><th>Qty</th><th>Price</th><th>1Y ret</th><th>P&L</th><th>Proceeds</th><th>Reason</th></tr>
 <tbody id="sells-body"></tbody>
 </table>
-<div class="notes" id="missing-note" style="display:none"></div>
 
-<h2>Rules &amp; Instructions</h2>
+<h2>Rules & Instructions</h2>
 <div class="rules">{rules}</div>
 
-<div class="footer">Generated {as_of} by advisor.py &middot; edits persist in this browser's
-localStorage &middot; run <code>python3 advisor.py --cash &lt;amount&gt;</code> monthly to refresh prices.</div>
+<div class="footer">Generated {as_of} by advisor.py &middot; holdings live on the
+<a href="#" onclick="showTab('portfolio'); return false;">Portfolio page</a> (same browser, shared storage) &middot; run
+<code>python3 advisor.py --cash <amount></code> every 3 months (or start the server and click
+<b>Run scan</b>) to refresh prices.</div>
 </div>
 <script type="application/json" id="advisor-data">{json.dumps(payload)}</script>
 <script>{_JS}</script>
@@ -735,7 +948,7 @@ localStorage &middot; run <code>python3 advisor.py --cash &lt;amount&gt;</code> 
 # ---------------------------------------------------------------------------
 def parse_args():
     today = date.today().isoformat()
-    p = argparse.ArgumentParser(description="Monthly momentum advisor -> interactive HTML page (NSE).")
+    p = argparse.ArgumentParser(description="Quarterly momentum advisor -> interactive HTML page (NSE).")
     p.add_argument("--cash", type=float, default=0.0, help="New cash this month (default for the page).")
     p.add_argument("--max-stocks", type=int, default=10)
     p.add_argument("--stoploss", type=float, default=0.07)
@@ -754,7 +967,7 @@ def parse_args():
     p.add_argument("--test-email", action="store_true",
                    help="Send a test email without scanning (verify credentials).")
     p.add_argument("--email-config", default="mail_config.json",
-                   help="JSON with sender/app_password/recipient for the monthly email.")
+                   help="JSON with sender/app_password/recipient for the quarterly email.")
     return p.parse_args()
 
 
@@ -821,22 +1034,121 @@ class _ScanHandler(SimpleHTTPRequestHandler):
     server_cfg = None
 
     def do_POST(self):
-        if self.path != "/scan":
+        if self.path == "/scan":
+            try:
+                out = run_scan(self.server_cfg)
+                body = json.dumps({"status": "ok", "as_of": out["as_of"],
+                                   "out_path": out["out_path"]}).encode()
+                code = 200
+            except Exception as e:
+                body = json.dumps({"status": "error", "message": str(e)}).encode()
+                code = 500
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/import-xlsx":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                if not length:
+                    raise ValueError("Empty upload")
+                content_type = self.headers.get("Content-Type", "")
+                if "multipart/form-data" not in content_type:
+                    raise ValueError("Expected multipart/form-data")
+                boundary = content_type.split("boundary=")[1].encode()
+                raw = self.rfile.read(length)
+                # Extract the file from multipart body
+                parts = raw.split(b"--" + boundary)
+                csv_text = None
+                for part in parts:
+                    if b"filename=" in part:
+                        # Find double CRLF then the file content
+                        header_end = part.find(b"\r\n\r\n")
+                        if header_end < 0:
+                            continue
+                        file_content = part[header_end + 4:]
+                        # Strip trailing \r\n-- if present
+                        if file_content.endswith(b"\r\n"):
+                            file_content = file_content[:-2]
+                        # Convert xlsx to csv using pandas
+                        import io
+                        df = pd.read_excel(io.BytesIO(file_content))
+                        csv_text = df.to_csv(index=False)
+                        break
+                if csv_text is None:
+                    raise ValueError("No file found in upload")
+                body = csv_text.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except Exception as e:
+                body = str(e).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        else:
             self.send_error(404)
-            return
+
+    def do_GET(self):
+        if self.path.startswith("/export"):
+            self._handle_export()
+        else:
+            super().do_GET()
+
+    def _handle_export(self):
+        """Read advisor.html, extract embedded JSON payload, compute recommendations, return CSV."""
+        import io, csv as _csv_mod
         try:
-            out = run_scan(self.server_cfg)
-            body = json.dumps({"status": "ok", "as_of": out["as_of"],
-                               "out_path": out["out_path"]}).encode()
-            code = 200
+            cfg = self.server_cfg
+            out_path = os.path.abspath(cfg.out_path)
+            with open(out_path, encoding="utf-8") as f:
+                html = f.read()
+            marker = 'id="advisor-data">'
+            start = html.index(marker) + len(marker)
+            end = html.index("</script>", start)
+            data = json.loads(html[start:end])
+
+            target = data["target"]
+            prices = data["prices"]
+            stoploss = data["stoploss"]
+            wsum = sum(t["weight"] for t in target) or 1
+
+            # Read holdings from embedded seed + localStorage won't work server-side,
+            # so just output the target list with rankings
+            buf = io.StringIO()
+            w = _csv_mod.writer(buf)
+            w.writerow(["Rank", "Ticker", "Target wt %", "Price (Rs)", "1Y ret %",
+                         "Stoploss (Rs)", "Action"])
+            for t in sorted(target, key=lambda x: x["rank"]):
+                tk = t["ticker"]
+                px = prices.get(tk, 0)
+                ret = data.get("ret_1y", {}).get(tk)
+                ret_str = f"{ret*100:.2f}" if ret is not None else ""
+                stop = f"{px * (1 - stoploss):.0f}" if px else ""
+                w.writerow([t["rank"], tk.replace(".NS", ""),
+                            f"{t['weight']*100:.1f}", f"{px:.2f}" if px else "",
+                            ret_str, stop, "BUY" if px else "n/a price"])
+
+            body = buf.getvalue().encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition",
+                             f'attachment; filename="advisor_targets_{data.get("as_of","")}.csv"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         except Exception as e:
-            body = json.dumps({"status": "error", "message": str(e)}).encode()
-            code = 500
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+            body = str(e).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
     def log_message(self, *args):
         sys.stderr.write(" ".join(str(a) for a in args[:3]) + "\n")
@@ -873,7 +1185,7 @@ def load_email_config(path: str) -> dict:
 
 
 def last_weekday(year: int, month: int) -> date:
-    """Last Mon-Fri of a month (the monthly scan/rebalance date)."""
+    """Last Mon-Fri of a month (the quarterly scan/rebalance date)."""
     d = date(year, month, calendar.monthrange(year, month)[1])
     while d.weekday() >= 5:
         d -= timedelta(days=1)
@@ -881,20 +1193,21 @@ def last_weekday(year: int, month: int) -> date:
 
 
 def next_scan_date_str(today: Optional[date] = None) -> str:
-    """Upcoming month-end scan: last weekday of the current month, or next."""
+    """Next quarterly scan: 4th of Feb/May/Aug/Nov."""
     today = today or date.today()
-    d = last_weekday(today.year, today.month)
-    if d < today:
-        y, m = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
-        d = last_weekday(y, m)
-    return d.strftime("%A %Y-%m-%d")
+    y = today.year
+    for m in (2, 5, 8, 11):
+        d = date(y, m, 4)
+        if d >= today:
+            return d.strftime("%A %Y-%m-%d")
+    return date(y + 1, 2, 4).strftime("%A %Y-%m-%d")
 
 
 def summary_text(payload: dict, rec: dict, as_of: str, next_scan: str) -> str:
-    """Plain-text body for the monthly email, mirroring the CLI summary."""
+    """Plain-text body for the quarterly email, mirroring the CLI summary."""
     target = payload.get("target", [])
     lines = [
-        "MOMENTUM ADVISOR - MONTHLY REPORT",
+        "MOMENTUM ADVISOR - QUARTERLY REPORT",
         "=" * 40,
         f"Data as of        : {as_of}",
         f"Last scan         : {payload.get('scan_time', '')}",
@@ -945,7 +1258,7 @@ def _rows_table(title: str, headers: List[str], rows: List[List[str]]) -> str:
 
 
 def summary_html(payload: dict, rec: dict, as_of: str, next_scan: str) -> str:
-    """HTML body for the monthly email with BUY / TOP-UP / HOLD / SELL tables."""
+    """HTML body for the quarterly email with BUY / TOP-UP / HOLD / SELL tables."""
     t = _html.escape
     buys = [a for a in rec["actions"] if a.action in ("BUY", "TOP-UP")]
     holds = [a for a in rec["actions"] if a.action == "HOLD"]
@@ -988,7 +1301,7 @@ def summary_html(payload: dict, rec: dict, as_of: str, next_scan: str) -> str:
     ])
 
     return f"""<html><body>
-<h2 style="margin-bottom:2px">Momentum Advisor &mdash; Monthly Report</h2>
+<h2 style="margin-bottom:2px">Momentum Advisor &mdash; Quarterly Report</h2>
 <ul>{summary}</ul>
 {blocks}
 <p><i>Note: summary reflects seed holdings.csv; the attached advisor.html is
@@ -1019,7 +1332,7 @@ def build_email(cfg: AdvisorConfig, payload: dict, rec: dict, as_of: str,
 
 def send_email(cfg: AdvisorConfig, payload: dict, rec: dict, as_of: str,
                attach_path: str, next_scan: Optional[str] = None) -> str:
-    """Send the monthly report via Gmail SMTP (STARTTLS, App Password)."""
+    """Send the quarterly report via Gmail SMTP (STARTTLS, App Password)."""
     mail = load_email_config(cfg.email_config)
     next_scan = next_scan or next_scan_date_str()
     msg = build_email(cfg, payload, rec, as_of, next_scan, attach_path, mail=mail)
@@ -1028,6 +1341,73 @@ def send_email(cfg: AdvisorConfig, payload: dict, rec: dict, as_of: str,
         server.login(mail["sender"], mail["app_password"])
         server.sendmail(mail["sender"], [mail["recipient"]], msg.as_string())
     return mail["recipient"]
+
+
+# ---------------------------------------------------------------------------
+# Quarterly reminder email (no scan - step-by-step instructions to run it)
+# ---------------------------------------------------------------------------
+REMINDER_STEPS = [
+    ("Open Terminal", "Launch the Terminal app on your Mac."),
+    ("Go to the project folder",
+     "cd ~/VSCODE/BK_test"),
+    ("Start the advisor server",
+     "./serve.sh\n   (or, without the helper script: python3 advisor.py --serve)"),
+    ("Open the report in your browser",
+     "http://localhost:8765/advisor.html"),
+    ("Refresh prices and targets",
+     "Click the 'Run scan' button (top-right). Wait for it to finish and reload."),
+    ("Verify your holdings",
+     "In the 'What you own' table, check/edit your ticker, quantity and buy price. "
+     "Set your new cash in the 'New cash this quarter' box."),
+    ("Act on the orders",
+     "Execute the BUY / TOP-UP / HOLD / SELL tables: sell what it says to sell, "
+     "buy what it says to buy in momentum rank order. Whole shares only."),
+    ("Save / export",
+     "Optionally click 'Export CSV' to keep a copy. Your holdings are saved "
+     "automatically in the browser."),
+]
+
+
+def build_reminder_email(mail: dict, next_scan: str,
+                         port: int = 8765) -> MIMEMultipart:
+    """Build the quarterly reminder message (text + HTML), no scan, no attachment."""
+    text_lines = [
+        "MOMENTUM ADVISOR - TIME FOR YOUR QUARTERLY SCAN",
+        "=" * 45,
+        f"Your next scan window: {next_scan}",
+        "",
+        "This is your once-every-3-months reminder to run the scan yourself. "
+        "It takes about 5 minutes. Follow these steps:",
+        "",
+    ]
+    for i, (title, body) in enumerate(REMINDER_STEPS, 1):
+        text_lines.append(f"{i}. {title}")
+        text_lines.append("   " + body.replace("\n", "\n   "))
+        text_lines.append("")
+
+    items = "".join(
+        f"<li><b>{_html.escape(title)}</b><br>{_html.escape(body)}</li>"
+        for title, body in REMINDER_STEPS)
+    html_body = f"""<html><body style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+<h2 style="margin-bottom:2px">Momentum Advisor &mdash; Time for your quarterly scan</h2>
+<p><b>Your next scan window: {_html.escape(next_scan)}</b></p>
+<p>This is your once-every-3-months reminder to run the scan yourself (about 5 minutes). Follow these steps:</p>
+<ol>{items}</ol>
+<p>Or run the scan directly from the terminal:</p>
+<pre style="background:#f6f8fa; padding:10px; border-radius:6px">
+cd ~/VSCODE/BK_test
+python3 advisor.py --cash <new cash></pre>
+<p><i>Notes: the scan refreshes prices and momentum targets and rewrites advisor.html.
+Check prices daily only to catch stoploss breaks. This is an aid, not investment advice.</i></p>
+</body></html>"""
+
+    msg = MIMEMultipart("alternative")
+    msg["From"] = mail["sender"]
+    msg["To"] = mail["recipient"]
+    msg["Subject"] = f"Momentum Advisor - run your quarterly scan ({next_scan})"
+    msg.attach(MIMEText("\n".join(text_lines), "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+    return msg
 
 
 def main():
