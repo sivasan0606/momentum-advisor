@@ -241,9 +241,9 @@ def tab_portfolio():
             else:
                 df = pd.read_csv(csv_file)
             df.columns = [c.strip().lower() for c in df.columns]
-            sym_col = next((c for c in ["symbol", "ticker", "stock", "company"] if c in df.columns), None)
-            qty_col = next((c for c in ["qty", "quantity"] if c in df.columns), None)
-            price_col = next((c for c in ["price", "avg.", "avg price", "average price"] if c in df.columns), None)
+            sym_col = next((c for c in ["symbol", "ticker", "stock", "company", "instrument"] if c in df.columns), None)
+            qty_col = next((c for c in ["qty", "quantity", "qty."] if c in df.columns), None)
+            price_col = next((c for c in ["price", "avg.", "avg price", "average price", "avg. cost", "avg cost"] if c in df.columns), None)
             date_col = next((c for c in ["trade_date", "date", "trade date"] if c in df.columns), None)
             type_col = next((c for c in ["trade_type", "type", "side"] if c in df.columns), None)
 
