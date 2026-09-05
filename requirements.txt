@@ -3,5 +3,6 @@ pandas
 matplotlib
 yfinance
 niftystocks
+openpyxl
 pyarrow
 streamlit

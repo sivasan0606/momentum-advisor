@@ -231,9 +231,7 @@ def tab_portfolio():
         })
 
     st.subheader("What you own")
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        csv_file = st.file_uploader("Load CSV/Excel (Zerodha tradebook)", type=["csv", "xlsx", "xls"])
+    csv_file = st.file_uploader("Load CSV/Excel (Zerodha tradebook)", type=["csv", "xlsx", "xls"])
 
     if csv_file is not None:
         try:
