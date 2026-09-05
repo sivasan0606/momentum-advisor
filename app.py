@@ -220,7 +220,9 @@ def tab_portfolio():
         port_start = st.text_input("Portfolio start", "2024-01-01", key="port_start")
         port_end = st.text_input("Portfolio end", pd.Timestamp.now().strftime("%Y-%m-%d"), key="port_end")
         port_stoploss = st.number_input("Stoploss %", 1.0, 30.0, 7.0, step=0.5, key="port_stop") / 100.0
-        port_run = st.button("Load prices", type="primary", key="port_run")
+        c1, c2 = st.columns(2)
+        port_run = c1.button("Load prices", type="primary", key="port_run")
+        port_refresh = c2.button("Refresh prices", key="port_refresh")
 
     if "holdings" not in st.session_state:
         st.session_state.holdings = pd.DataFrame({
@@ -299,7 +301,9 @@ def tab_portfolio():
         },
     )
 
-    if port_run:
+    if port_run or port_refresh:
+        if port_refresh:
+            load_prices.clear()
         with st.spinner("Loading prices..."):
             daily = load_prices(port_start, port_end, None)
             current_prices = {}
