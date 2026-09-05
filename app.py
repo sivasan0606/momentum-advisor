@@ -325,18 +325,16 @@ def tab_portfolio():
         hs["stoploss_price"] = hs["avg_price"] * (1.0 - port_stoploss)
 
         display = pd.DataFrame({
-            "Ticker": hs["ticker"],
-            "Qty": hs["quantity"],
-            "Buy Price": hs["avg_price"].apply(lambda x: fmt_money(x) if x else "n/a"),
-            "Inv Value": hs.apply(lambda r: fmt_money(r["inv_value"]) if r["quantity"] and r["avg_price"] else "n/a", axis=1),
-            "Buy Date": hs["entry_date"].apply(lambda x: x if x else "n/a"),
-            "Current": hs["current_price"].apply(lambda x: fmt_money(x) if pd.notna(x) else "n/a"),
-            "1Y Return": hs["ret_1y"].apply(lambda x: fmt_pct(x) if pd.notna(x) else "n/a"),
-            "P&L %": hs["pnl_pct"].apply(lambda x: fmt_pct(x) if pd.notna(x) else "n/a"),
-            "P&L (Rs)": hs.apply(lambda r: fmt_money(r["pnl_rs"]) if pd.notna(r["current_price"]) else "n/a", axis=1),
-            "Stoploss": hs["stoploss_price"].apply(lambda x: fmt_money(x) if x else "n/a"),
+            "Instrument": hs["ticker"],
+            "Qty.": hs["quantity"],
+            "Avg. cost": hs["avg_price"].apply(lambda x: fmt_money(x) if x else "n/a"),
+            "LTP": hs["current_price"].apply(lambda x: fmt_money(x) if pd.notna(x) else "n/a"),
+            "Invested": hs.apply(lambda r: fmt_money(r["inv_value"]) if r["quantity"] and r["avg_price"] else "n/a", axis=1),
+            "Cur. val": hs.apply(lambda r: fmt_money(r["cur_value"]) if pd.notna(r["current_price"]) else "n/a", axis=1),
+            "P&L": hs.apply(lambda r: fmt_money(r["pnl_rs"]) if pd.notna(r["current_price"]) else "n/a", axis=1),
+            "Net chg": hs["pnl_pct"].apply(lambda x: fmt_pct(x) if pd.notna(x) else "n/a"),
         })
-        st.dataframe(display.set_index("Ticker"), use_container_width=True)
+        st.dataframe(display.set_index("Instrument"), use_container_width=True)
 
         valid = hs[hs["current_price"].notna() & (hs["avg_price"] > 0)]
         if len(valid) > 0:
